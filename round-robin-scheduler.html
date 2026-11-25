@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Round Robin CPU Scheduler</title>
+<style>
+:root{--bg:#f3f5f2;--surface:#fff;--ink:#17231f;--mute:#5a6b64;--line:#d5ddd8;--accent:#0d6b5c;--accent-ink:#fff;--idle:#c9d1cc;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101a17;--surface:#17251f;--ink:#e6eeea;--mute:#98aba3;--line:#2b3d36;--accent:#4fd1b8;--accent-ink:#06231d;--idle:#34463f;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101a17;--surface:#17251f;--ink:#e6eeea;--mute:#98aba3;--line:#2b3d36;--accent:#4fd1b8;--accent-ink:#06231d;--idle:#34463f;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Source Serif 4",Georgia,"Times New Roman",serif}
+h1,h2,h3,button,label,th,summary,.tab,.mono{font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif}
+h1{font-size:clamp(1.6rem,4vw,2.4rem);margin:0 0 .2rem;letter-spacing:-.01em}
+h2{font-size:1.25rem;margin:1.6rem 0 .6rem}
+h3{font-size:1rem;margin:1.2rem 0 .3rem}
+header,main{max-width:1000px;margin:0 auto;padding:0 16px}
+header{padding-top:24px}
+header p{margin:0;color:var(--mute);max-width:62ch}
+nav{display:flex;gap:4px;margin:18px 0 0;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:none;border:0;border-bottom:3px solid transparent;padding:10px 14px;font-size:.95rem;color:var(--mute);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--ink);border-color:var(--accent);font-weight:600}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+section.panel{display:none;padding:8px 0 40px}
+section.panel.on{display:block}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;margin:14px 0}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-size:.8rem;color:var(--mute);font-weight:600}
+input[type=number]{width:72px;padding:5px 6px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink);font:inherit}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.btn{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:7px 13px;font-size:.9rem;cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn:disabled{opacity:.5;cursor:default}
+label{font-size:.9rem;color:var(--mute)}
+.gantt{display:flex;min-height:54px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--bg)}
+.seg{display:flex;align-items:center;justify-content:center;font:600 .8rem "IBM Plex Sans",system-ui,sans-serif;color:#0b1a16;min-width:0;border-right:1px solid rgba(0,0,0,.25);overflow:hidden}
+.seg.idle{background:var(--idle);color:var(--mute)}
+.ticks{display:flex;font:.72rem "IBM Plex Sans",system-ui,sans-serif;color:var(--mute);margin-top:3px}
+.ticks span{min-width:0;overflow:visible;white-space:nowrap}
+.queue{display:flex;gap:6px;flex-wrap:wrap;min-height:34px;align-items:center}
+.chip{padding:3px 12px;border-radius:14px;font:600 .85rem "IBM Plex Sans",system-ui,sans-serif;color:#0b1a16}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stat{border-left:3px solid var(--accent);padding:2px 10px}
+.stat b{display:block;font:600 1.4rem "IBM Plex Sans",system-ui,sans-serif}
+.stat span{font-size:.82rem;color:var(--mute)}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:12px;overflow-x:auto;font:.84rem/1.5 ui-monospace,Consolas,monospace}
+details{border-bottom:1px solid var(--line);padding:10px 0}
+summary{cursor:pointer;font-weight:600}
+details p{margin:.5rem 0 0}
+.prose{max-width:72ch}
+.note{color:var(--mute);font-size:.88rem}
+svg text{fill:var(--mute);font:11px "IBM Plex Sans",system-ui,sans-serif}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+<h1>Round Robin CPU Scheduler</h1>
+<p>Enter processes, pick a time quantum and watch the CPU hand out turns.</p>
+<nav role="tablist" id="tabs">
+<button class="tab" role="tab" data-p="sim" aria-selected="true">Simulator</button>
+<button class="tab" role="tab" data-p="cmp" aria-selected="false">Quantum study</button>
+</nav>
+</header>
+<main>
+
+<section class="panel on" id="sim">
+<div class="card">
+<div class="row" style="margin-bottom:10px">
+<label>Time quantum <input type="number" id="q" min="1" value="3"></label>
+<button class="btn" id="add">Add process</button>
+<button class="btn" id="rand">Random set</button>
+<button class="btn" id="sample">Load sample</button>
+</div>
+<div class="scroll"><table id="ptab"><thead><tr><th>Process</th><th>Arrival</th><th>Burst</th><th></th></tr></thead><tbody></tbody></table></div>
+<p id="err" class="note" role="alert" style="color:#b3261e"></p>
+<div class="row">
+<button class="btn pri" id="run">Run simulation</button>
+<button class="btn" id="play" disabled>Play</button>
+<button class="btn" id="step" disabled>Step</button>
+<button class="btn" id="reset" disabled>Reset</button>
+<label>Speed <input type="range" id="spd" min="1" max="10" value="5"></label>
+</div>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">Gantt chart</h3>
+<div class="gantt" id="gantt" aria-label="Gantt chart"></div>
+<div class="ticks" id="ticks"></div>
+<p class="note" id="now" style="margin:12px 0 4px">Run the simulation to begin.</p>
+<div class="row"><b class="mono" style="font-size:.85rem">Ready queue</b><div class="queue" id="queue"></div></div>
+</div>
+
+<div class="card" id="results" hidden>
+<div class="scroll"><table id="rtab"><thead><tr><th>Process</th><th>Arrival</th><th>Burst</th><th>Completion</th><th>Turnaround</th><th>Waiting</th><th>Response</th></tr></thead><tbody></tbody></table></div>
+<div class="stats" id="stats" style="margin-top:14px"></div>
+<p class="note">Turnaround = completion − arrival. Waiting = turnaround − burst. Response = first run − arrival.</p>
+</div>
+</section>
+
+<section class="panel" id="cmp">
+<div class="card prose">
+<h2 style="margin-top:0">How does the quantum change performance?</h2>
+<p>This chart re-runs your current process set for every quantum from 1 up to the longest burst. A very small quantum means many context switches; a very large one makes Round Robin behave like FCFS.</p>
+<div class="scroll"><div id="chart"></div></div>
+<div class="scroll"><table id="ctab"><thead><tr><th>Quantum</th><th>Avg waiting</th><th>Avg turnaround</th><th>Avg response</th><th>Context switches</th></tr></thead><tbody></tbody></table></div>
+</div>
+</section>
+
+
+</main>
+
+<script>
+(function(){
+var $=function(s){return document.querySelector(s)};
+var procs=[],result=null,pos=0,timer=null;
+
+function color(i){return "hsl("+((i*67+140)%360)+",55%,68%)"}
+
+/* ---------- scheduling engine ---------- */
+function schedule(input,q){
+  var ps=input.map(function(p,i){return{id:p.id,idx:i,at:p.at,bt:p.bt,rem:p.bt,first:-1,ct:0}});
+  var order=ps.slice().sort(function(a,b){return a.at-b.at||a.idx-b.idx});
+  var queue=[],segs=[],t=0,i=0,done=0,n=ps.length;
+  function admit(){while(i<n&&order[i].at<=t){queue.push(order[i]);i++}}
+  admit();
+  while(done<n){
+    if(!queue.length){
+      var nx=order[i].at;
+      segs.push({pid:"Idle",idx:-1,s:t,e:nx,q:[]});
+      t=nx;admit();continue;
+    }
+    var p=queue.shift();
+    var snap=queue.map(function(x){return x.idx});
+    if(p.first<0)p.first=t;
+    var run=Math.min(q,p.rem),s=t;
+    t+=run;p.rem-=run;
+    segs.push({pid:p.id,idx:p.idx,s:s,e:t,q:snap,left:p.rem});
+    admit();
+    if(p.rem>0)queue.push(p);else{p.ct=t;done++}
+  }
+  var busy=0,sw=0,k;
+  for(k=0;k<segs.length;k++){if(segs[k].idx>=0)busy+=segs[k].e-segs[k].s}
+  for(k=1;k<segs.length;k++){if(segs[k].idx>=0&&segs[k-1].idx>=0&&segs[k].idx!==segs[k-1].idx)sw++}
+  var rows=ps.map(function(p){var tat=p.ct-p.at;return{id:p.id,idx:p.idx,at:p.at,bt:p.bt,ct:p.ct,tat:tat,wt:tat-p.bt,rt:p.first-p.at}});
+  function avg(f){return rows.reduce(function(a,r){return a+r[f]},0)/n}
+  return{segs:segs,rows:rows,avgWt:avg("wt"),avgTat:avg("tat"),avgRt:avg("rt"),sw:sw,end:t,util:busy/t*100,busy:busy};
+}
+
+/* ---------- input table ---------- */
+function drawInputs(){
+  var tb=$("#ptab tbody");tb.innerHTML="";
+  procs.forEach(function(p,i){
+    var tr=document.createElement("tr");
+    var c0=document.createElement("td");c0.textContent=p.id;tr.appendChild(c0);
+    ["at","bt"].forEach(function(f){
+      var td=document.createElement("td"),inp=document.createElement("input");
+      inp.type="number";inp.min=f==="bt"?1:0;inp.value=p[f];
+      inp.setAttribute("aria-label",p.id+(f==="at"?" arrival time":" burst time"));
+      inp.addEventListener("input",function(){p[f]=parseInt(inp.value,10)});
+      td.appendChild(inp);tr.appendChild(td);
+    });
+    var td=document.createElement("td"),b=document.createElement("button");
+    b.className="btn";b.textContent="Remove";
+    b.addEventListener("click",function(){procs.splice(i,1);drawInputs()});
+    td.appendChild(b);tr.appendChild(td);tb.appendChild(tr);
+  });
+}
+function renum(){procs.forEach(function(p,i){p.id="P"+(i+1)})}
+function validate(){
+  var q=parseInt($("#q").value,10);
+  if(!procs.length)return"Add at least one process.";
+  if(!(q>=1))return"The time quantum must be a whole number of 1 or more.";
+  for(var i=0;i<procs.length;i++){
+    if(!(procs[i].at>=0))return procs[i].id+": arrival time must be 0 or more.";
+    if(!(procs[i].bt>=1))return procs[i].id+": burst time must be 1 or more.";
+  }
+  return"";
+}
+
+/* ---------- rendering ---------- */
+function drawGantt(upto){
+  var g=$("#gantt"),tk=$("#ticks");g.innerHTML="";tk.innerHTML="";
+  if(!result)return;
+  var total=result.end;
+  result.segs.forEach(function(s,k){
+    if(k>upto)return;
+    var w=(s.e-s.s)/total*100;
+    var d=document.createElement("div");d.className="seg"+(s.idx<0?" idle":"");
+    d.style.width=w+"%";d.textContent=s.idx<0?"Idle":s.pid;
+    if(s.idx>=0)d.style.background=color(s.idx);
+    d.title=s.pid+": "+s.s+" to "+s.e;g.appendChild(d);
+    var t=document.createElement("span");t.style.width=w+"%";t.textContent=s.s;tk.appendChild(t);
+  });
+  if(upto>=result.segs.length-1){
+    var e=document.createElement("span");e.textContent=total;e.style.marginLeft="-0.1em";tk.appendChild(e);
+  }
+}
+function drawQueue(s){
+  var qd=$("#queue");qd.innerHTML="";
+  if(!s||!s.q.length){var e=document.createElement("span");e.className="note";e.textContent="empty";qd.appendChild(e);return}
+  s.q.forEach(function(ix){var c=document.createElement("span");c.className="chip";c.style.background=color(ix);c.textContent=procs[ix]?procs[ix].id:"";qd.appendChild(c)});
+}
+function describe(s){
+  if(s.idx<0)return"Time "+s.s+" to "+s.e+": CPU idle, waiting for the next arrival.";
+  return"Time "+s.s+" to "+s.e+": "+s.pid+" runs for "+(s.e-s.s)+" unit"+(s.e-s.s>1?"s":"")+(s.left>0?" and is pre-empted with "+s.left+" left.":" and finishes.");
+}
+function showStep(k){
+  drawGantt(k);
+  var s=result.segs[k];
+  $("#now").textContent=describe(s);
+  drawQueue(s);
+  if(k>=result.segs.length-1){stop();showResults()}
+}
+function f(x){return(Math.round(x*100)/100).toString()}
+function showResults(){
+  var r=result;$("#results").hidden=false;
+  var tb=$("#rtab tbody");tb.innerHTML="";
+  r.rows.forEach(function(x){
+    var tr=document.createElement("tr");
+    [x.id,x.at,x.bt,x.ct,x.tat,x.wt,x.rt].forEach(function(v){var td=document.createElement("td");td.textContent=v;tr.appendChild(td)});
+    tb.appendChild(tr);
+  });
+  var st=$("#stats");st.innerHTML="";
+  [["Avg waiting",f(r.avgWt)],["Avg turnaround",f(r.avgTat)],["Avg response",f(r.avgRt)],["Context switches",r.sw],["CPU utilisation",f(r.util)+"%"],["Total time",r.end]].forEach(function(a){
+    var d=document.createElement("div");d.className="stat";var b=document.createElement("b");b.textContent=a[1];var s=document.createElement("span");s.textContent=a[0];d.appendChild(b);d.appendChild(s);st.appendChild(d);
+  });
+}
+
+/* ---------- playback ---------- */
+function stop(){if(timer){clearInterval(timer);timer=null}$("#play").textContent="Play"}
+function advance(){
+  if(pos<result.segs.length-1){pos++;showStep(pos)}else stop();
+}
+$("#run").addEventListener("click",function(){
+  stop();
+  var e=validate();$("#err").textContent=e;if(e)return;
+  result=schedule(procs,parseInt($("#q").value,10));
+  pos=0;$("#results").hidden=true;
+  ["#play","#step","#reset"].forEach(function(s){$(s).disabled=false});
+  showStep(0);
+  buildCompare();
+});
+$("#step").addEventListener("click",function(){stop();advance()});
+$("#play").addEventListener("click",function(){
+  if(timer){stop();return}
+  if(pos>=result.segs.length-1){pos=0;$("#results").hidden=true;showStep(0)}
+  $("#play").textContent="Pause";
+  timer=setInterval(advance,1300-$("#spd").value*115);
+});
+$("#spd").addEventListener("input",function(){if(timer){stop();$("#play").click()}});
+$("#reset").addEventListener("click",function(){stop();pos=0;$("#results").hidden=true;showStep(0)});
+
+/* ---------- process set controls ---------- */
+$("#add").addEventListener("click",function(){procs.push({id:"",at:0,bt:4});renum();drawInputs()});
+$("#sample").addEventListener("click",function(){
+  procs=[{at:0,bt:5},{at:1,bt:3},{at:2,bt:8},{at:3,bt:6}].map(function(p){return{id:"",at:p.at,bt:p.bt}});
+  $("#q").value=3;renum();drawInputs();
+});
+$("#rand").addEventListener("click",function(){
+  var n=3+Math.floor(Math.random()*4);procs=[];
+  for(var i=0;i<n;i++)procs.push({id:"",at:Math.floor(Math.random()*8),bt:1+Math.floor(Math.random()*9)});
+  renum();drawInputs();
+});
+
+/* ---------- quantum study ---------- */
+function buildCompare(){
+  var maxb=Math.max.apply(null,procs.map(function(p){return p.bt}));
+  var data=[];
+  for(var q=1;q<=maxb;q++){var r=schedule(procs,q);data.push({q:q,wt:r.avgWt,tat:r.avgTat,rt:r.avgRt,sw:r.sw})}
+  var tb=$("#ctab tbody");tb.innerHTML="";
+  data.forEach(function(d){
+    var tr=document.createElement("tr");
+    [d.q,f(d.wt),f(d.tat),f(d.rt),d.sw].forEach(function(v){var td=document.createElement("td");td.textContent=v;tr.appendChild(td)});
+    tb.appendChild(tr);
+  });
+  var W=Math.max(520,data.length*56+70),H=240,L=40,B=30,T=14;
+  var mx=Math.max.apply(null,data.map(function(d){return Math.max(d.wt,d.rt,d.tat)}))||1;
+  var ns="http://www.w3.org/2000/svg";
+  var svg=document.createElementNS(ns,"svg");svg.setAttribute("viewBox","0 0 "+W+" "+H);svg.setAttribute("width",W);svg.setAttribute("role","img");
+  svg.setAttribute("aria-label","Average waiting, turnaround and response time against time quantum");
+  function X(i){return L+(data.length>1?i*(W-L-20)/(data.length-1):0)}
+  function Y(v){return T+(H-T-B)*(1-v/mx)}
+  function el(n,a,txt){var e=document.createElementNS(ns,n);for(var k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;svg.appendChild(e);return e}
+  el("line",{x1:L,y1:H-B,x2:W-10,y2:H-B,stroke:"currentColor","stroke-opacity":.3});
+  el("line",{x1:L,y1:T,x2:L,y2:H-B,stroke:"currentColor","stroke-opacity":.3});
+  el("text",{x:4,y:T+8},f(mx));el("text",{x:4,y:H-B},"0");
+  data.forEach(function(d,i){el("text",{x:X(i)-3,y:H-10},d.q)});
+  el("text",{x:W/2-30,y:H-1},"time quantum");
+  [["tat","#0d9a85","Turnaround"],["wt","#d9822b","Waiting"],["rt","#7a6cd6","Response"]].forEach(function(s,si){
+    var pts=data.map(function(d,i){return X(i)+","+Y(d[s[0]])}).join(" ");
+    el("polyline",{points:pts,fill:"none",stroke:s[1],"stroke-width":2.5});
+    data.forEach(function(d,i){el("circle",{cx:X(i),cy:Y(d[s[0]]),r:3,fill:s[1]})});
+    el("line",{x1:L+10+si*110,y1:8,x2:L+30+si*110,y2:8,stroke:s[1],"stroke-width":3});
+    el("text",{x:L+34+si*110,y:12},s[2]);
+  });
+  var c=$("#chart");c.innerHTML="";c.appendChild(svg);
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll(".tab").forEach(function(b){
+  b.addEventListener("click",function(){
+    document.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b)});
+    document.querySelectorAll(".panel").forEach(function(p){p.classList.toggle("on",p.id===b.dataset.p)});
+    if(b.dataset.p==="cmp"&&!result&&!validate())buildCompare();
+  });
+});
+
+$("#sample").click();
+})();
+</script>
+</body>
+</html>
